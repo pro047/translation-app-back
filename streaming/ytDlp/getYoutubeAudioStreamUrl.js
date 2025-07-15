@@ -1,12 +1,18 @@
 const { spawn } = require("child_process");
 
 async function getYoutubeAudioStreamUrl(youtubeUrl) {
-  console.log("yt-dlp called");
+  console.log("streamlink called");
 
   return new Promise((resolve, reject) => {
     console.log("fetching youtube stream url..", youtubeUrl);
 
-    const ytDlp = spawn("yt-dlp", ["-f", "b", "-g", youtubeUrl]);
+    const streamlink = spawn("streamlink", [
+      "-O",
+      youtubeUrl,
+      "best",
+      "--retry-streams",
+      "infinite",
+    ]);
 
     let streamUrl = "";
     let errorOutput = "";

@@ -1,122 +1,199 @@
 const speech = require("@google-cloud/speech");
-const { spawn } = require("child_process");
+const { initSttStream } = require("../streaming/initSttStream");
+const { startYoutubeStream } = require("../streaming/startYoutubeStream");
 const {
-  getYoutubeAudioStreamUrl,
-} = require("../streaming/getYoutubeAudioStreamUrl");
+  startFlushLoop,
+  stopFlushLoop,
+} = require("../streaming/startFlushLoop");
 const { TranscriptManager } = require("../transcript/transcriptManager");
-const statLogger = require("../statLogger");
-const { once } = require("events");
+const logger = require("../util/logger");
+const { performance } = require("perf_hooks");
 
 class StreamingSession {
-  constructor({ sessionId, youtubeUrl, ws, pushToClient }) {
+  constructor({ sessionId, youtubeUrl, ws, pythonWs }) {
     this.sessionId = sessionId;
     this.youtubeUrl = youtubeUrl;
     this.ws = ws;
+    this.pythonWs = pythonWs;
+
     this.speechClient = new speech.SpeechClient();
-    this.transcriptManager = new TranscriptManager(pushToClient);
-    this.ffmpegProcess = null;
+    this.transcriptManager = new TranscriptManager(sessionId, ws, pythonWs);
+
+    this.ffmpeg = null;
+    this.streamLink = null;
     this.recognizeStream = null;
-    this.isStarted = false;
-    this.isStopped = false;
+    this.flushInterval = null;
+    this.startTime = null;
+    this.endTime = null;
+    this.restartTimer = null;
+
+    this._isStarted = false;
+    this._isStopped = false;
+    this.isRestarting = false;
+    this.flushLoopStarted = false;
+
     this.queue = [];
-    this.MAX_QUEUE_SIZE = 200;
     this.lastFfmpegDateAt = Date.now();
-    this.noDataTimeout = 20000;
+    this.noDataTimeout = 30000;
     this.noDataTimer = null;
+
     this.restartCount = 0;
     this.lastRestartAt = 0;
-    this.pcmBuffer = Buffer.alloc(0);
   }
 
   async start() {
     if (this.isStarted) {
-      console.log(`this session ${this.sessionId} is already started`);
+      logger.info(`this session ${this.sessionId} is already started`);
       return;
     }
 
-    if (this.recognizeStream) {
-      try {
-        this.recognizeStream.end();
-        this.recognizeStream.removeAllListeners();
-        this.recognizeStream = null;
-      } catch (err) {
-        console.warn("‼️ recognizeStream end error :", err);
-      }
+    if (this.pythonWs.readyState === 1) {
+      this.pythonWs.send(
+        JSON.stringify({
+          type: "session",
+          sessionId: this.sessionId,
+          action: "start",
+        })
+      );
+    } else {
+      logger.info(`python websocket readystate ${this.pythonWs.readyState}`);
     }
+
+    this._cleanupRecognizeStream();
+
     this.isStarted = true;
     this.isStopped = false;
 
-    const request = {
-      config: {
-        encoding: "LINEAR16",
-        sampleRateHertz: 16000,
-        languageCode: "ko-KR",
-        enableAutomaticPunctuation: true,
-        useEnhanced: true,
-        model: "latest_long",
-      },
-      interimResults: true,
-      singleUtterance: false,
-    };
+    initSttStream(this);
 
-    this.recognizeStream = this.speechClient
-      .streamingRecognize(request)
-      .on("data", (data) => {
-        statLogger.addSttEvent();
-        if (data.results[0]?.alternatives[0]) {
-          const transcript = data.results[0].alternatives[0].transcript;
-          console.log("✅ this.recognizeStream data :", transcript);
+    startFlushLoop(this);
 
-          const isFinal = data.results[0].isFinal;
+    await startYoutubeStream(this);
 
-          this.transcriptManager.onTranscript(transcript, isFinal);
-        }
-      })
-      .on("error", (err) => this.handleError(err))
-      .on("end", () => this.handleEnd());
+    this._scheduleRestart();
 
-    await this.startYoutubeStream();
-
-    this.startFlushLoop();
+    this.startTime = performance.now();
   }
 
-  handleError(err) {
-    console.error(`‼️ STT error : ${err.message}`);
-    this.ws?.send(JSON.stringify({ error: err.message }));
-    this.restart();
-  }
-
-  handleEnd() {
-    console.log(`❌ STT ended ${this.sessionId}`);
-    this.stop();
-  }
-
-  async stop() {
+  async stop({ keepWebSocket = true } = {}) {
     if (this.isStopped) return;
     this.isStarted = false;
     this.isStopped = true;
 
+    if (!keepWebSocket && this.pythonWs.readyState === 1) {
+      this.pythonWs.send(
+        JSON.stringify({
+          type: "session",
+          sessionId: this.sessionId,
+          action: "stop",
+        })
+      );
+      this.pythonWs.close(1000, "session ended");
+    }
+
     this.queue = [];
 
+    stopFlushLoop(this);
+
+    this._cleanupStreamLink();
+    this._cleanupFfmpeg();
+    this._cleanupRecognizeStream();
+    this._clearTimers();
+
+    clearTimeout(this.restartTimer);
+    this.restartTimer = null;
+
+    this.endTime = performance.now();
+
+    logger.info(
+      `[performance time] : startTime = ${this.startTime} endTime = ${
+        this.endTime
+      } performance tiem = ${this.endTime - this.startTime}`
+    );
+  }
+
+  async restart() {
+    await this.stop({ keepWebSocket: true });
+    await new Promise((res) => setTimeout(res, 100));
+    await this.start();
+  }
+
+  _scheduleRestart() {
+    if (this.restartTimer) clearTimeout(this.restartTimer);
+
+    this.restartTimer = setTimeout(() => {
+      if (!this.isStopped) this.restart();
+      logger.info(`‼️ restart stream due to 5minute left`);
+    }, 180000);
+  }
+
+  async _handleError(err) {
+    logger.error(new Error(`‼️ STT error : ${err.message}`));
+
+    if (this.isRestarting) return;
+    this.isRestarting = true;
+
+    this.ws?.send(JSON.stringify({ error: err.message }));
+
+    await this.restart();
+
+    this.isRestarting = false;
+  }
+
+  _handleEnd(code) {
+    if (code !== 0) {
+      logger.error(`❌ STT ended ${this.sessionId} code : ${code}`);
+    } else {
+      logger.info(`stt ended code : ${code}`);
+    }
+    this.stop({ keepWebSocket: false });
+  }
+
+  _cleanupRecognizeStream() {
     if (this.recognizeStream)
       try {
         this.recognizeStream.end();
         this.recognizeStream.removeAllListeners();
         this.recognizeStream = null;
+        logger.debug("recognizeStream end");
       } catch (err) {
-        console.warn("❌ recognizeStream end error :", err);
+        logger.error(new Error(`❌ recognizeStream end error : ${err}`));
       }
+  }
 
-    if (this.ffmpegProcess) {
+  _cleanupStreamLink() {
+    if (this.streamLink) {
       try {
-        this.ffmpegProcess.kill("SIGKILL");
-        this.ffmpegProcess.removeAllListeners();
-        this.ffmpegProcess = null;
+        this.streamLink.stdout?.removeAllListeners?.();
+        this.streamLink.stderr?.removeAllListeners?.();
+        this.streamLink.kill("SIGKILL");
+        this.streamLink.removeAllListeners();
+        this.streamLink = null;
+        logger.info("streamlink end");
       } catch (err) {
-        console.warn("❌ ffmepgProcess kill error :", err);
+        logger.error(new Error(`❌ streamlink kill error : ${err}`));
       }
     }
+  }
 
+  _cleanupFfmpeg() {
+    if (this.ffmpeg) {
+      try {
+        this.ffmpeg.stdin?.destroy();
+
+        this.ffmpeg.stdout?.removeAllListeners?.();
+        this.ffmpeg.stderr?.removeAllListeners?.();
+        this.ffmpeg.kill("SIGKILL");
+        this.ffmpeg.removeAllListeners();
+        this.ffmpeg = null;
+        logger.info("ffmpeg end");
+      } catch (err) {
+        logger.error(new Error(`❌ ffmpeg kill error : ${err}`));
+      }
+    }
+  }
+
+  _clearTimers() {
     if (this.noDataTimer) {
       clearInterval(this.noDataTimer);
       this.noDataTimer = null;
@@ -126,143 +203,6 @@ class StreamingSession {
       clearTimeout(this.transcriptManager.timeout);
       this.transcriptManager.timeout = null;
     }
-  }
-
-  async restart() {
-    await this.stop();
-    setTimeout(() => this.start(), 100);
-  }
-
-  async startYoutubeStream() {
-    const streamUrl = await getYoutubeAudioStreamUrl(this.youtubeUrl);
-
-    try {
-      console.log(`👌 Final stream URL: ${streamUrl}`);
-
-      this.ffmpegProcess = spawn("ffmpeg", [
-        "-re",
-        "-loglevel",
-        "debug",
-        "-i",
-        streamUrl,
-        "-vn",
-        "-strict",
-        "-2",
-        "-f",
-        "s16le",
-        "-acodec",
-        "pcm_s16le",
-        "-ar",
-        "16000",
-        "-ac",
-        "1",
-        "-rtbufsize",
-        "512k",
-        "-",
-      ]);
-
-      if (!this.ffmpegProcess || !this.ffmpegProcess.stdout) {
-        console.error("ffmpeg spwn failed");
-        return;
-      } else {
-        console.log("🎬 ffmpeg start");
-      }
-
-      this.ffmpegProcess.stdout.on("data", (chunk) => {
-        statLogger.addFfmepg(chunk.length);
-        this.lastFfmpegDateAt = Date.now();
-        if (this.queue.length > this.MAX_QUEUE_SIZE) {
-          this.queue.shift();
-        }
-        this.queue.push(chunk);
-      });
-
-      this.ffmpegProcess.on("error", (err) => {
-        console.error("ffmpeg error :", err);
-        this.handleError(err);
-      });
-
-      this.ffmpegProcess.on("close", (code) => {
-        console.log(`ffmpeg process exited with code ${code}`);
-        if (this.recognizeStream) {
-          this.recognizeStream.end();
-          this.recognizeStream = null;
-        }
-      });
-
-      if (this.noDataTimer) clearInterval(this.noDataTimer);
-      this.noDataTimer = setInterval(() => {
-        if (Date.now() - this.lastFfmpegDateAt > this.noDataTimeout) {
-          console.warn(
-            "[warn] no audio data from ffmpeg for a while. Restart.."
-          );
-          this.restartFfmepg();
-        }
-      }, 1000);
-    } catch (err) {
-      console.error(`Failed to start youtube stream: ${err}`);
-    }
-  }
-
-  restartFfmepg() {
-    const now = Date.now();
-    if (now - this.lastRestartAt < 60000) {
-      this.restartCount++;
-      if (this.restartCount > 5) {
-        console.warn("[warn] ffmpeg restart too frequent sleeping...");
-        setTimeout(() => (this.restartCount = 0), 60000);
-        return;
-      }
-    } else {
-      this.restartCount = 0;
-    }
-    this.lastRestartAt = now;
-
-    try {
-      if (this.ffmpegProcess) {
-        this.ffmpegProcess.kill("SIGKILL");
-        this.ffmpegProcess.removeAllListeners();
-        this.ffmpegProcess = null;
-      }
-    } catch (err) {
-      console.warn("ffmpeg kill err", err);
-    }
-    this.startYoutubeStream();
-  }
-
-  startFlushLoop() {
-    const CHUNK_SIZE = 3200;
-
-    const writeLoop = async () => {
-      while (!this.isStopped) {
-        while (this.queue.length > 0) {
-          this.pcmBuffer = Buffer.concat([this.pcmBuffer, this.queue.shift()]);
-        }
-
-        if (this.pcmBuffer.length >= CHUNK_SIZE && this.recognizeStream) {
-          const chunk = this.pcmBuffer.subarray(0, CHUNK_SIZE);
-          this.pcmBuffer = this.pcmBuffer.subarray(CHUNK_SIZE);
-
-          const canWrite = this.recognizeStream.write(chunk);
-          if (!canWrite) {
-            console.warn(
-              "‼️ recognizeStream write blocked, waiting for drain..."
-            );
-            await once(this.recognizeStream, "drain");
-          }
-        } else {
-          if (this.recognizeStream && this.pcmBuffer.length == 0) {
-            const silenceChunk = Buffer.alloc(CHUNK_SIZE, 0);
-            this.recognizeStream.write(silenceChunk);
-            console.log("[warn] silence chunk sent");
-          }
-
-          await new Promise((res) => setTimeout(res, 100));
-        }
-      }
-    };
-
-    writeLoop();
   }
 }
 

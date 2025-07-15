@@ -1,79 +1,128 @@
-const ENDINGS = [".", "?", "!", "입니다.", "합니다.", "다."];
-const TIMEOUT_MS = 3000;
+const logger = require("../util/logger");
+const _ = require("lodash");
 
 class TranscriptManager {
-  constructor(pushFn) {
+  constructor(sessionId, ws, pythonWs) {
+    this.sessionId = sessionId;
+    this.ws = ws;
+    this.pythonWs = pythonWs;
+
+    this.diffQueue = [];
+    this.debouncedSendToPython = _.debounce(this.flushQeueue.bind(this), 500);
+
     this.lastPushed = "";
-    this.currentTranscript = "";
-    this.lastNormalized = "";
-    this.pushFn = pushFn;
-    this.timeout = null;
   }
 
-  onTranscript(transcript, isFinal) {
-    this.currentTranscript = transcript;
+  getTranscript = (transcript, isFinal) => {
+    const diff = this.getDiff(transcript);
+    if (!diff) return;
 
-    if (!transcript.trim()) return;
+    if (isFinal === true) {
+      this.lastPushed = "";
 
-    const isSentenceEnd = ENDINGS.some((e) => diff.trim().includes(e));
-
-    if (isSentenceEnd || isFinal) {
-      this.pushNow(isFinal);
-    } else {
-      this.armTimeout();
-    }
-  }
-
-  armTimeout() {
-    if (this.timeout) clearTimeout(this.timeout);
-    this.timeout = setTimeout(() => {
-      this.pushNow(false);
-    }, TIMEOUT_MS);
-  }
-
-  pushNow(isFinal) {
-    let diff = this.currentTranscript;
-    const normalCurrTrans = normalize(this.currentTranscript);
-    const normalLastPushed = normalize(this.lastPushed);
-
-    if (
-      this.lastPushed.length > 0 &&
-      normalCurrTrans.includes(normalLastPushed)
-    ) {
-      const idx = normalCurrTrans.indexOf(normalLastPushed);
-      diff = normalCurrTrans.slice(idx + normalLastPushed.length);
+      logger.debug(
+        `[normalCurrTrans at isFinal] : ${normalize(
+          transcript
+        )} \n ‼️ [normalLastPushed] : ${normalize(this.lastPushed)}`
+      );
     }
 
-    const normalDiff = normalize(diff).trim();
+    if (!this.diffQueue.includes(diff)) {
+      this.diffQueue.push(diff);
+    }
+    this.debouncedSendToPython();
+  };
 
-    console.log(
-      `➡️ normalCurrTrans : ${normalCurrTrans} \n➡️ normalDiff : ${normalDiff} \n➡️ norLast : ${normalLastPushed}`
+  flushQeueue() {
+    if (this.diffQueue.length === 0) return;
+
+    // this.diffQueue.forEach((i) => logger.debug(`[diffQueue values] : ${i}`));
+
+    const combinedDiff = this.diffQueue.join(" ").trim();
+    // logger.debug(`[combinedDiff] : ${combinedDiff}`);
+
+    this._sendToPythonWs(this.sessionId, combinedDiff);
+    this.diffQueue = [];
+  }
+
+  getDiff(transcript) {
+    const normalCurrTrans = normalize(transcript);
+    let normalLastPushed = normalize(this.lastPushed);
+
+    logger.debug(`[normalCurrTrans] : ${normalCurrTrans}`);
+    logger.debug(`[normalLastPushed] : ${normalLastPushed}`);
+    logger.debug(
+      `[normalCurrTrans.length < normalLastPushed.length] : ${
+        normalCurrTrans.length < normalLastPushed.length
+      }`
+    );
+    logger.debug(
+      `[normalCurrTrans includes] : ${normalCurrTrans.includes(
+        normalLastPushed
+      )}`
     );
 
-    if (!diff || diff.trim() === "") {
-      console.log("skip ⏭️");
+    let diff = normalCurrTrans;
+
+    if (normalCurrTrans.includes(normalLastPushed)) {
+      diff = normalCurrTrans.slice(normalLastPushed.length);
+    }
+
+    if (normalCurrTrans.length < normalLastPushed.length) {
+      this.lastPushed = normalCurrTrans;
       return;
     }
 
-    if (normalDiff.length < 5 || normalDiff === this.lastNormalized) {
-      console.log(
-        `❌ 조건 미충족으로 푸쉬 생략 \n➡️ normal diff : ${normalDiff} - len : ${normalDiff.length} `
-      );
+    if (!normalCurrTrans.includes(normalLastPushed)) {
+      this.lastPushed = normalCurrTrans;
       return;
     }
 
-    this.pushFn({ transcript: normalDiff, isFinal });
-    console.log(`🫸 pushed ➡️ ${normalDiff}`);
+    const normalDiff = diff.trim();
 
-    if (isFinal) {
-      console.log("‼️ pushed due to isFinal true");
+    if (
+      !diff ||
+      normalDiff.length < 5 ||
+      normalCurrTrans === normalLastPushed
+    ) {
+      logger.debug(`can calc normalDiff`);
+      return;
     }
 
-    this.lastPushed = this.currentTranscript;
-    this.lastNormalized = normalDiff;
+    this.lastPushed = normalCurrTrans;
 
-    if (this.timeout) clearTimeout(this.timeout);
-    this.timeout = null;
+    logger.debug(`리턴 값 : ${normalDiff}`);
+    return normalDiff;
+  }
+
+  _sendToPythonWs = (sessionId, diff) => {
+    if (this.pythonWs.readyState === WebSocket.OPEN) {
+      const data = JSON.stringify({
+        type: "transcript",
+        sessionId,
+        text: diff,
+      });
+      this.pythonWs.send(data);
+      logger.debug(`python으로 전송 : ${data}`);
+    } else {
+      logger.error("python으로 전송 실패");
+    }
+  };
+
+  receive(sentence, isFianl) {
+    this.pushToClient(sentence, isFianl);
+  }
+
+  pushToClient(sentence, isFianl) {
+    if (
+      !this.ws ||
+      this.ws.readyState !== 1 ||
+      !this.sessionId ||
+      sentence.trim().length === 0
+    )
+      return;
+
+    this.ws.send(JSON.stringify({ transcript: sentence, isFinal: isFianl }));
   }
 }
 
@@ -81,7 +130,7 @@ function normalize(text) {
   return text
     .trim()
     .replace(/[\s]+/g, " ")
-    .replace(/[.!?]+$/, "");
+    .replace(/[.,!?]/g, "");
 }
 
 module.exports = { TranscriptManager };

@@ -6,25 +6,31 @@ const { Server } = require("ws");
 const { v4: uuidv4 } = require("uuid");
 
 const { deleteSession } = require("./session/sessionStore");
-const { SessionManager } = require("./session/sessionManager");
+const sessionManager = require("./session/sessionManager");
+const logger = require("./util/logger");
 
 const PORT = process.env.PORT || 5001;
+const NGROK_URL = process.env.NGROK_URL;
 
 const app = express();
 app.use(express.json());
 
 const server = http.createServer(app);
-const wss = new Server({ server, path: "/ws/session" });
-const sessionManager = new SessionManager();
+const wssClient = new Server({ noServer: true });
 
-app.post("/start-translation", async (req, res) => {
+// app.post("/stt", (req, res) => {
+//   res.json({ message: "OK" });
+//   logger.info("요청 도착 :", req.body);
+// });
+
+app.post("/start-translation", (req, res) => {
   const { youtubeUrl } = req.body;
   const sessionId = uuidv4();
 
   try {
     res.json({
       sessionId,
-      websocketUrl: `wss://2efe-220-124-99-7.ngrok-free.app/ws/session?sessionId=${sessionId}&youtubeUrl=${encodeURIComponent(
+      websocketUrl: `${NGROK_URL}/ws/session?sessionId=${sessionId}&youtubeUrl=${encodeURIComponent(
         youtubeUrl
       )}`,
     });
@@ -34,13 +40,23 @@ app.post("/start-translation", async (req, res) => {
   }
 });
 
-app.post("/stop-translation", async (req, res) => {
+app.post("/stop-translation", (req, res) => {
   const { sessionId } = req.body;
   sessionManager.stopSession(sessionId);
   res.status(200).json({ message: "stop" });
 });
 
-wss.on("connection", async (ws, req) => {
+server.on("upgrade", (req, socket, head) => {
+  if (req.url.startsWith("/ws/session")) {
+    wssClient.handleUpgrade(req, socket, head, (ws) => {
+      wssClient.emit("connection", ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+wssClient.on("connection", async (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const sessionId = url.searchParams.get("sessionId");
   const youtubeUrl = url.searchParams.get("youtubeUrl");
