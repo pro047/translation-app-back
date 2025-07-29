@@ -16,12 +16,14 @@ const initSttStream = (session) => {
   };
 
   try {
-    session.recognizeStream = session.speechClient
+    const recognizeStream = session.speechClient
       .streamingRecognize(request)
       .on("data", (data) => {
         if (data.results[0]?.alternatives[0]) {
           const transcript = data.results[0].alternatives[0].transcript;
           const isFinal = data.results[0]?.isFinal;
+
+          logger.debug(`transcript : ${transcript}`);
 
           session.transcriptManager.getTranscript(transcript, isFinal);
         }
@@ -31,6 +33,8 @@ const initSttStream = (session) => {
         session._handleError(err);
       })
       .on("end", (code) => session._handleEnd(code));
+
+    return recognizeStream;
   } catch (err) {
     logger.error(new Error(`recognizseStream create error ${err}`));
   }

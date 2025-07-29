@@ -1,4 +1,7 @@
-const { pythonWs, setOnMessageCallback } = require("../network/networkFastApi");
+const {
+  getPythonSocket,
+  setOnMessageCallback,
+} = require("../network/networkFastApi");
 const logger = require("../util/logger");
 const { setSession, deleteSession } = require("./sessionStore");
 const { StreamingSession } = require("./streamingSession");
@@ -24,6 +27,8 @@ class SessionManager {
       this.sessions.delete(sessionId);
       deleteSession(sessionId);
     }
+
+    const pythonWs = getPythonSocket();
 
     const session = new StreamingSession({
       sessionId,

@@ -1,5 +1,6 @@
 const http = require("http");
 const { Server } = require("ws");
+const { setupPing } = require("./util/pingpong");
 
 const server = http.createServer();
 const wss = new Server({ server, path: "/ws/python" });
@@ -12,6 +13,9 @@ server.on("upgrade", (req, socket, head) => {
 
 wss.on("connection", (ws) => {
   logger.info("websocket connected");
+
+  setupPing(ws, "python ping pong");
+
   ws.on("message", (msg) => {
     try {
       const { sessionId, sentence } = JSON.parse(msg);

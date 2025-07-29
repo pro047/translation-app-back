@@ -1,4 +1,3 @@
-const { once } = require("events");
 const logger = require("../util/logger");
 
 const FLUSH_INTERVAL = 100;
@@ -9,19 +8,28 @@ const startFlushLoop = (session) => {
 
   logger.info("start flush loop");
 
-  setTimeout(() => {
-    initialDelay = false;
-  }, 3000);
-
   session.flushInterval = setInterval(() => {
     if (
       !session.isStopped &&
       session.queue.length > 0 &&
-      session.recognizeStream?.writable
+      (session.recognizeStream?.writable ||
+        session.newrecognizeStream?.writable)
     ) {
       const chunk = session.queue.shift();
-      if (chunk) {
-        session.recognizeStream.write(chunk);
+      if (!chunk) return;
+
+      const streamMap = [
+        { name: "recognizeStream", stream: session.recognizeStream },
+        { name: "newrecognizeStrea", stream: session.newrecognizeStream },
+      ];
+
+      const writableStreams = streamMap.filter(
+        ({ stream }) => stream?.writable
+      );
+
+      for (const { stream } of writableStreams) {
+        logger.debug(`[flush loop] writing chunk to : ${stream._streamID}`);
+        stream.write(chunk);
       }
     }
   }, FLUSH_INTERVAL);

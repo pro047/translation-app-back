@@ -30,7 +30,6 @@ const startYoutubeStream = async (session) => {
       ffmpeg,
       (chunk) => {
         const remainingSpace = TOTAL_BUFFER_SIZE - bufferOffset;
-
         if (chunk.length > remainingSpace) {
           bufferOffset = 0;
         }

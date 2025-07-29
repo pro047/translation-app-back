@@ -4,9 +4,11 @@ const express = require("express");
 const http = require("http");
 const { Server } = require("ws");
 const { v4: uuidv4 } = require("uuid");
+const { setupPing } = require("./util/pingpong");
 
 const { deleteSession } = require("./session/sessionStore");
 const sessionManager = require("./session/sessionManager");
+const { connectPython } = require("./network/networkFastApi");
 const logger = require("./util/logger");
 
 const PORT = process.env.PORT || 5001;
@@ -17,11 +19,6 @@ app.use(express.json());
 
 const server = http.createServer(app);
 const wssClient = new Server({ noServer: true });
-
-// app.post("/stt", (req, res) => {
-//   res.json({ message: "OK" });
-//   logger.info("요청 도착 :", req.body);
-// });
 
 app.post("/start-translation", (req, res) => {
   const { youtubeUrl } = req.body;
@@ -47,6 +44,7 @@ app.post("/stop-translation", (req, res) => {
 });
 
 server.on("upgrade", (req, socket, head) => {
+  logger.info(`websocket upgrade : ${req.url}`);
   if (req.url.startsWith("/ws/session")) {
     wssClient.handleUpgrade(req, socket, head, (ws) => {
       wssClient.emit("connection", ws, req);
@@ -61,11 +59,14 @@ wssClient.on("connection", async (ws, req) => {
   const sessionId = url.searchParams.get("sessionId");
   const youtubeUrl = url.searchParams.get("youtubeUrl");
 
+  setupPing(ws, `Flutter Client ${sessionId}`);
+
   sessionManager.createSession({ sessionId, youtubeUrl, ws });
   sessionManager.startSession(sessionId);
 
   ws.on("close", async (code, reason) => {
     console.log("❌ Client disconnected", { code, reason });
+
     sessionManager.stopSession(sessionId);
 
     setTimeout(() => {
@@ -74,6 +75,8 @@ wssClient.on("connection", async (ws, req) => {
     }, 30000);
   });
 });
+
+connectPython();
 
 server.listen(PORT, () => {
   console.log(`😀 Server listening on ${PORT}`);

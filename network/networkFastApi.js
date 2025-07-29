@@ -1,31 +1,54 @@
 const WebSocket = require("ws");
 const logger = require("../util/logger");
 
-const pythonWs = new WebSocket("ws://127.0.0.1:8765");
-
+let pythonWs = null;
+let reconnectTimer = null;
 let onMessageCallback = null;
 
-pythonWs.on("open", () => {
-  logger.info("python 연결 성공");
-});
-pythonWs.on("message", (message) => {
-  if (!onMessageCallback) return;
+const connectPython = () => {
+  pythonWs = new WebSocket("ws://127.0.0.1:8765");
 
-  try {
-    const { sessionId, sentence, isFianl } = JSON.parse(message);
-    onMessageCallback(sessionId, sentence, isFianl);
-    logger.info(`받은 메시지 : ${message}`);
-  } catch (err) {
-    logger.error(new Error(`message parsing error : ${err}`));
-  }
-});
+  pythonWs.on("open", () => {
+    logger.info("python 연결 성공");
+  });
+  pythonWs.on("message", (message) => {
+    if (!onMessageCallback) return;
 
-pythonWs.on("error", (err) => {
-  logger.error(new Error(`python 연결 실패: ${err}`));
-});
+    try {
+      const { sessionId, sentence, isFinal } = JSON.parse(message);
+      onMessageCallback(sessionId, sentence, isFinal);
+      logger.info(`받은 메시지 : ${message}`);
+    } catch (err) {
+      logger.error(new Error(`message parsing error : ${err}`));
+    }
+  });
+
+  pythonWs.on("close", (err) => {
+    logger.error(new Error(`Failed python connecting : ${err}`));
+    scheduleRestart();
+  });
+
+  pythonWs.on("error", (err) => {
+    logger.error(new Error(`python 연결 실패: ${err}`));
+    pythonWs.close();
+  });
+};
+
+const scheduleRestart = () => {
+  if (reconnectTimer) return;
+
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connectPython();
+  }, 3000);
+};
 
 const setOnMessageCallback = (callback) => {
   onMessageCallback = callback;
 };
 
-module.exports = { pythonWs, setOnMessageCallback };
+module.exports = {
+  connectPython,
+  setOnMessageCallback,
+  getPythonSocket: () => pythonWs,
+};

@@ -9,6 +9,9 @@ const { TranscriptManager } = require("../transcript/transcriptManager");
 const logger = require("../util/logger");
 const { performance } = require("perf_hooks");
 
+const TEST_MODE = true;
+const RECYCLING_TIME = TEST_MODE ? 10 * 1000 : 4 * 60 * 1000;
+
 class StreamingSession {
   constructor({ sessionId, youtubeUrl, ws, pythonWs }) {
     this.sessionId = sessionId;
@@ -17,11 +20,12 @@ class StreamingSession {
     this.pythonWs = pythonWs;
 
     this.speechClient = new speech.SpeechClient();
-    this.transcriptManager = new TranscriptManager(sessionId, ws, pythonWs);
 
     this.ffmpeg = null;
     this.streamLink = null;
     this.recognizeStream = null;
+    this.oldrecognizeStream = null;
+    this.newrecognizeStream = null;
     this.flushInterval = null;
     this.startTime = null;
     this.endTime = null;
@@ -31,6 +35,7 @@ class StreamingSession {
     this._isStopped = false;
     this.isRestarting = false;
     this.flushLoopStarted = false;
+    this.isSwapped = false;
 
     this.queue = [];
     this.lastFfmpegDateAt = Date.now();
@@ -64,7 +69,18 @@ class StreamingSession {
     this.isStarted = true;
     this.isStopped = false;
 
-    initSttStream(this);
+    this.transcriptManager = new TranscriptManager({
+      sessionId: this.sessionId,
+      ws: this.ws,
+      pythonWs: this.pythonWs,
+      isSwapped: this.isSwapped,
+    });
+
+    this.recognizeStream = initSttStream(this);
+    this.recognizeStream._streamID = `stream-${Date.now()}`;
+    logger.info(
+      `recognizeStream._streamID : ${this.recognizeStream._streamID}`
+    );
 
     startFlushLoop(this);
 
@@ -112,19 +128,72 @@ class StreamingSession {
     );
   }
 
-  async restart() {
-    await this.stop({ keepWebSocket: true });
-    await new Promise((res) => setTimeout(res, 100));
-    await this.start();
+  async restartGoogleStream() {
+    if (this.isRestarting) return;
+    this.isRestarting = true;
+
+    try {
+      logger.info(
+        `♻️ Restarting only google STT stream for session ${this.sessionId}`
+      );
+
+      this.oldrecognizeStream = this.recognizeStream;
+
+      logger.info(`this.recognizeStream : ${this.recognizeStream}`);
+      logger.info(`this.oldStream : ${this.oldrecognizeStream}`);
+
+      this.newrecognizeStream = initSttStream(this);
+      this.newrecognizeStream._streamID = `stream-${Date.now()}`;
+
+      logger.info(
+        `this.newRecognizeStream : ${this.newrecognizeStream._streamID} created!`
+      );
+
+      if (!this.newrecognizeStream)
+        throw new Error("Failed to create new STT stream");
+
+      this.newrecognizeStream.once("data", () => {
+        logger.info("‼️ new stream ready, swapping streams ‼️");
+
+        this.recognizeStream = this.newrecognizeStream;
+        this.isSwapped = true;
+        this.transcriptManager.notifySwapped();
+
+        if (this.oldrecognizeStream) {
+          try {
+            this.oldrecognizeStream.end();
+            this.oldrecognizeStream.removeAllListeners();
+          } catch (err) {
+            logger.error(new Error(`old recognizeStream close error ${err}`));
+          }
+          this.oldrecognizeStream = null;
+          this.newrecognizeStream = null;
+        }
+
+        this._scheduleRestart();
+
+        logger.info("STT stream swap complete");
+      });
+
+      this.lastRestartAt = Date.now();
+      this.restartCount += 1;
+      this.isSwapped = false;
+    } catch (err) {
+      logger.error(new Error(`restartGoogleSttStream error : ${err}`));
+    }
+
+    this.isRestarting = false;
   }
 
   _scheduleRestart() {
     if (this.restartTimer) clearTimeout(this.restartTimer);
 
     this.restartTimer = setTimeout(() => {
-      if (!this.isStopped) this.restart();
-      logger.info(`‼️ restart stream due to 5minute left`);
-    }, 180000);
+      if (!this.isStopped && !this.isRestarting) {
+        this.restartGoogleStream();
+        logger.info("Google STT stream restart scheduled");
+      }
+    }, RECYCLING_TIME);
   }
 
   async _handleError(err) {
@@ -135,7 +204,7 @@ class StreamingSession {
 
     this.ws?.send(JSON.stringify({ error: err.message }));
 
-    await this.restart();
+    await this.restartGoogleStream();
 
     this.isRestarting = false;
   }
