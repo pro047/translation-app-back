@@ -6,7 +6,7 @@ let reconnectTimer = null;
 let onMessageCallback = null;
 
 const connectPython = () => {
-  pythonWs = new WebSocket("wss://neemba-stt-kss.onrender.com");
+  pythonWs = new WebSocket("wss://neemba-stt-kss.onrender.com/ws/python");
 
   pythonWs.on("open", () => {
     logger.info("python 연결 성공");
