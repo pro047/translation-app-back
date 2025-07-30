@@ -1,10 +1,9 @@
 FROM node:18
 
-RUN apt-get update
-RUN apt-get install -y python3-pip python3-setuptools python3-wheel ffmpeg
-RUN  pip3 install --upgrade pip
-RUN  pip3 install streamlink
-RUN  apt-get clean
+RUN apt-get update && \
+    apt-get install -y python3-pip python3-setuptools python3-wheel ffmpeg && \
+    pip3 install streamlink && \
+    apt-get clean
 
 WORKDIR /app
 
