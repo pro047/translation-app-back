@@ -21,7 +21,7 @@ const server = http.createServer(app);
 const wssClient = new Server({ noServer: true });
 
 app.get("/", (req, res) => {
-  res.json({ status: ok });
+  res.json({ status: "ok" });
 });
 
 app.post("/start-translation", (req, res) => {
