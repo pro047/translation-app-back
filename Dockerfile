@@ -1,7 +1,7 @@
 FROM node:18
 
 RUN apt-get update && \
-    apt-get install -y -python3-pip ffmpege && \
+    apt-get install -y python3-pip ffmpeg && \
     pip3 install streamlink && \
     apt-get clean
 
