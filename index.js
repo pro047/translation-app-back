@@ -12,7 +12,7 @@ const { connectPython } = require("./network/networkFastApi");
 const logger = require("./util/logger");
 
 const PORT = process.env.PORT || 5001;
-const NGROK_URL = process.env.NGROK_URL;
+const WEBSOCKET_URL = process.env.WEBSOCKET_URL;
 
 const app = express();
 app.use(express.json());
@@ -31,7 +31,7 @@ app.post("/start-translation", (req, res) => {
   try {
     res.json({
       sessionId,
-      websocketUrl: `${NGROK_URL}/ws/session?sessionId=${sessionId}&youtubeUrl=${encodeURIComponent(
+      websocketUrl: `${WEBSOCKET_URL}/ws/session?sessionId=${sessionId}&youtubeUrl=${encodeURIComponent(
         youtubeUrl
       )}`,
     });
