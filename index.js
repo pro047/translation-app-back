@@ -20,6 +20,10 @@ app.use(express.json());
 const server = http.createServer(app);
 const wssClient = new Server({ noServer: true });
 
+app.get("/", (req, res) => {
+  res.json({ status: ok });
+});
+
 app.post("/start-translation", (req, res) => {
   const { youtubeUrl } = req.body;
   const sessionId = uuidv4();
