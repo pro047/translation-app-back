@@ -1,4 +1,4 @@
-require("dotenv").config;
+require("dotenv").config();
 const { spawn } = require("child_process");
 
 const spawnStreamLink = (youtubeUrl) => {
