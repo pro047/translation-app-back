@@ -30,7 +30,7 @@ const spawnStreamLink = (youtubeUrl) => {
 
   const streamlink = spawn(
     "streamlink" || process.env.STREAMLINK_PATH,
-    ["-O", youtubeUrl, ...cookieArgs, "--retry-streams", "999999", "best"],
+    ["-O", youtubeUrl, "best", ...cookieArgs, "--retry-streams", "999999"],
     { env: process.env }
   );
 
