@@ -1,10 +1,20 @@
 require("dotenv").config();
 const { spawn } = require("child_process");
 
+const cookiePath = process.env.YOUTUBE_COOKIE_PATH;
+
 const spawnStreamLink = (youtubeUrl) => {
   const streamlink = spawn(
     "streamlink" || process.env.STREAMLINK_PATH,
-    ["-O", youtubeUrl, "best", "--retry-streams", "999999"],
+    [
+      "--cookies",
+      cookiePath,
+      "--retry-streams",
+      "999999",
+      "-O",
+      youtubeUrl,
+      "best",
+    ],
     { env: process.env }
   );
 
