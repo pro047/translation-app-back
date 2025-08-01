@@ -7,7 +7,7 @@ const spawnStreamLink = (youtubeUrl) => {
   const streamlink = spawn(
     "streamlink" || process.env.STREAMLINK_PATH,
     [
-      "--cookies",
+      "--http-cookie",
       cookiePath,
       "--retry-streams",
       "999999",
