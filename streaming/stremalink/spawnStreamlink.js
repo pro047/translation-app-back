@@ -23,13 +23,13 @@ const spawnStreamLink = (youtubeUrl) => {
   const streamlink = spawn(
     streamlinkCmd,
     [
+      "-O",
+      youtubeUrl,
+      "best",
       "--http-cookie",
       cookieString,
       "--retry-streams",
       "999999",
-      "-O",
-      youtubeUrl,
-      "best",
     ],
     { env: process.env }
   );
