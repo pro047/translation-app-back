@@ -54,6 +54,7 @@ server.on("upgrade", (req, socket, head) => {
       wssClient.emit("connection", ws, req);
     });
   } else {
+    logger.error(`websocket error `);
     socket.destroy();
   }
 });

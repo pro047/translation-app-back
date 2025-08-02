@@ -6,7 +6,7 @@ let reconnectTimer = null;
 let onMessageCallback = null;
 
 const connectPython = () => {
-  pythonWs = new WebSocket("ws://13.125.209.93:8000/ws/python");
+  pythonWs = new WebSocket("ws://52.78.119.41:8000/ws/python");
 
   pythonWs.on("open", () => {
     logger.info("python 연결 성공");
