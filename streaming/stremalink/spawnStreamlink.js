@@ -2,7 +2,8 @@ require("dotenv").config();
 const { spawn } = require("child_process");
 const fs = require("fs");
 
-const cookiePath = process.env.YOUTUBE_COOKIE_PATH;
+const cookiePath =
+  process.env.YOUTUBE_COOKIE_PATH || "../../config/cookies.txt";
 const streamlinkCmd = process.env.STREAMLINK_PATH || "streamlink";
 
 function parseCookiesFromFile(filePath) {
