@@ -8,16 +8,26 @@ const streamlinkCmd = process.env.STREAMLINK_PATH || "streamlink";
 
 function parseCookiesFromFile(filePath) {
   const raw = fs.readFileSync(filePath, "utf8");
-  return raw
-    .split("\n")
-    .filter((line) => /SID|HSID|SSID|SAPISID|APISID/.test(line))
-    .map((line) => {
-      const parts = line.trim().split(/\s+/);
-      return `${parts[5]}=${parts[6]}`;
-    })
+
+  const validkeys = new Set(["SID", "HSID", "SSID", "SAPISID", "APISID"]);
+
+  const cookieMap = {};
+
+  raw.split("\n").map((line) => {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length >= 7) {
+      const name = parts[5];
+      const value = parts[6];
+      if (validkeys.has(name)) {
+        cookieMap[name] = value;
+      }
+    }
+  });
+
+  return Object.entries(cookieMap)
+    .map(([key, value]) => `${key}=${value}`)
     .join(";");
 }
-
 const cookieString = parseCookiesFromFile(cookiePath);
 
 const spawnStreamLink = (youtubeUrl) => {
