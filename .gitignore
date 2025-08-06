@@ -3,3 +3,4 @@ node_modules
 service-account.json
 .clinic/
 /config/cookies.txt
+puppeteer_data/

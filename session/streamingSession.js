@@ -22,7 +22,6 @@ class StreamingSession {
     this.speechClient = new speech.SpeechClient();
 
     this.ffmpeg = null;
-    this.streamLink = null;
     this.recognizeStream = null;
     this.oldrecognizeStream = null;
     this.newrecognizeStream = null;

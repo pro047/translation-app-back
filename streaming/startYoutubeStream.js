@@ -4,10 +4,10 @@ const { spawnFfmpegProcess } = require("./ffmpeg/spawnFfmpegProcess");
 const { restartFfmpeg } = require("./ffmpeg/restartFfmpeg");
 const logger = require("../util/logger");
 const { queueManager } = require("../queue/queueManager");
-const { spawnStreamLink } = require("./stremalink/spawnStreamlink");
+const { puppeteerLogin } = require("./puppeteerLogin/puppeteerLogin");
 const {
-  streamlinkEventHandler,
-} = require("./stremalink/streamlinkEventHandler");
+  getYoutubeAudioStreamUrl,
+} = require("./ytDlp/getYoutubeAudioStreamUrl");
 
 const CHUNK_SIZE = 3200;
 const BUFFER_MULTIPLIER = 10;
@@ -15,12 +15,10 @@ const TOTAL_BUFFER_SIZE = CHUNK_SIZE * BUFFER_MULTIPLIER;
 
 const startYoutubeStream = async (session) => {
   try {
-    const streamLink = spawnStreamLink(session.youtubeUrl);
-    const ffmpeg = spawnFfmpegProcess();
+    await puppeteerLogin();
+    const streamUrl = await getYoutubeAudioStreamUrl(session.youtubeUrl);
 
-    streamLink.stdout.pipe(ffmpeg.stdin);
-
-    session.streamLink = streamLink;
+    const ffmpeg = spawnFfmpegProcess(streamUrl);
     session.ffmpeg = ffmpeg;
 
     const audioBuffer = Buffer.alloc(TOTAL_BUFFER_SIZE);
@@ -49,12 +47,6 @@ const startYoutubeStream = async (session) => {
         }
       },
       (data) => logger.error(`[ffmpeg stderr] ${data}`),
-      (err) => session._handleError(err),
-      (code) => session._handleEnd(code)
-    );
-
-    streamlinkEventHandler(
-      streamLink,
       (err) => session._handleError(err),
       (code) => session._handleEnd(code)
     );
