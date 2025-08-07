@@ -9,27 +9,12 @@ const ffmpegNoDataHandler = (session, restartCallback) => {
     const now = Date.now();
     const localString = Date.now().toLocaleString("ko-KR");
 
-    // const isNoDataTooLong =
-    //   now - session.lastFfmpegDateAt > session.noDataTimeout;
-    const isStreamlinkDead =
-      !session.streamLink ||
-      session.streamLink.killed ||
-      session.streamLink.exitCode != null;
     const isFfmpegDead =
       !session.ffmpeg ||
       session.ffmpeg.killed ||
       session.ffmpeg.exitCode !== null;
 
-    if (isStreamlinkDead || isFfmpegDead) {
-      // if (isNoDataTooLong) {
-      //   logger.warn(`[${localString}] is No Data Too Long warning..`);
-      //   logger.info(`[now] : ${Date.now()}`);
-      //   logger.info(`[session.lastFfmpegDateAt] : ${session.lastFfmpegDateAt}`);
-      //   logger.info(`[session.noDataTimeout] : ${session.noDataTimeout}`);
-      // }
-      if (isStreamlinkDead) {
-        logger.warn(`[${localString}] is StreamlinkDead warning..`);
-      }
+    if (isFfmpegDead) {
       if (isFfmpegDead) {
         logger.warn(`[${localString}] is FfmpegDead warning..`);
       }
